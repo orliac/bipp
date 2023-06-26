@@ -45,7 +45,7 @@ def centroid_to_intervals(centroid, filter_negative_eigenvalues):
         if filter_negative_eigenvalues:
             return np.array([[0, np.finfo("f").max]])
         else:
-            return np.array([[np.finfo("f").min, -np.finfo("f").tiny], [np.finfo("f").tiny, np.finfo("f").max]])
+            return np.array([[np.finfo("f").tiny, np.finfo("f").max], [np.finfo("f").min, -np.finfo("f").tiny]])
 
     if filter_negative_eigenvalues:
         intervals = np.empty((centroid.size, 2))
