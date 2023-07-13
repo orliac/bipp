@@ -10,7 +10,6 @@
 #include <functional>
 #include <memory>
 #include <vector>
-#include <cassert>
 
 #include "bipp/config.h"
 #include "bipp/exceptions.hpp"
@@ -110,22 +109,21 @@ auto NufftSynthesis<T>::collect(std::size_t nEig, T wl, const T* intervals, std:
   
   auto v = Buffer<std::complex<T>>(ctx_->host_alloc(), nBeam_ * nEig);
   auto d = Buffer<T>(ctx_->host_alloc(), nEig);
-  auto g = Buffer<std::complex<T>>(ctx_->host_alloc(), nBeam_ * nBeam_);
 
-  gram_matrix<T>(*ctx_, nAntenna_, nBeam_, w, ldw, xyz, ldxyz, wl, g.get(), nBeam_);
+  {
+    auto g = Buffer<std::complex<T>>(ctx_->host_alloc(), nBeam_ * nBeam_);
 
-  std::size_t nEigOut = 0;
-  char range = filter_negative_eigenvalues_ ? 'V' : 'A';
+    gram_matrix<T>(*ctx_, nAntenna_, nBeam_, w, ldw, xyz, ldxyz, wl, g.get(), nBeam_);
+
+    char range = filter_negative_eigenvalues_ ? 'V' : 'A';
   
-  // Note different order of s and g input
-  if (s)
-    eigh<T>(*ctx_, nBeam_, nEig, s, lds, g.get(), nBeam_, range, &nEigOut, d.get(), v.get(), nBeam_);
-  else {
-    eigh<T>(*ctx_, nBeam_, nEig, g.get(), nBeam_, nullptr, 0, range, &nEigOut, d.get(), v.get(), nBeam_);
+    // Note different order of s and g input
+    if (s)
+      eigh<T>(*ctx_, nBeam_, nEig, s, lds, g.get(), nBeam_, range, d.get(), v.get(), nBeam_);
+    else {
+      eigh<T>(*ctx_, nBeam_, nEig, g.get(), nBeam_, nullptr, 0, range, d.get(), v.get(), nBeam_);
+    }
   }
-
-  if (not filter_negative_eigenvalues_)
-      assert(nEig == nEigOut);
 
   auto virtVisPtr = virtualVis_.get() + collectCount_ * nAntenna_ * nAntenna_;
 

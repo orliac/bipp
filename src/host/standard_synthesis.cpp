@@ -77,25 +77,21 @@ auto StandardSynthesis<T>::collect(std::size_t nEig, T wl, const T* intervals,
   center_vector(nAntenna_, xyz + ldxyz, xyzCentered.get() + nAntenna_);
   center_vector(nAntenna_, xyz + 2 * ldxyz, xyzCentered.get() + 2 * nAntenna_);
 
+  {
+    auto g = Buffer<std::complex<T>>(ctx_->host_alloc(), nBeam_ * nBeam_);
 
-  auto g = Buffer<std::complex<T>>(ctx_->host_alloc(), nBeam_ * nBeam_);
+    gram_matrix<T>(*ctx_, nAntenna_, nBeam_, w, ldw, xyzCentered.get(), nAntenna_, wl, g.get(),
+                   nBeam_);
 
-  gram_matrix<T>(*ctx_, nAntenna_, nBeam_, w, ldw, xyzCentered.get(), nAntenna_, wl, g.get(),
-                 nBeam_);
+    char range = filter_negative_eigenvalues_ ? 'V' : 'A';
 
-  std::size_t nEigOut = 0;
-
-  char range = filter_negative_eigenvalues_ ? 'V' : 'A';
-
-  // Note different order of s and g input
-  if (s)
-    eigh<T>(*ctx_, nBeam_, nEig, s, lds, g.get(), nBeam_, range, &nEigOut, d.get(), v.get(), nBeam_);
-  else {
-    eigh<T>(*ctx_, nBeam_, nEig, g.get(), nBeam_, nullptr, 0, range, &nEigOut, d.get(), v.get(), nBeam_);
+    // Note different order of s and g input
+    if (s)
+      eigh<T>(*ctx_, nBeam_, nEig, s, lds, g.get(), nBeam_, range, d.get(), v.get(), nBeam_);
+    else {
+      eigh<T>(*ctx_, nBeam_, nEig, g.get(), nBeam_, nullptr, 0, range, d.get(), v.get(), nBeam_);
+    }
   }
-
-  if (not filter_negative_eigenvalues_)
-      assert(nEig == nEigOut);
 
   blas::gemm(CblasColMajor, CblasNoTrans, CblasNoTrans, nAntenna_, nEig, nBeam_, {1, 0}, w, ldw,
              v.get(), nBeam_, {0, 0}, vUnbeam.get(), nAntenna_);

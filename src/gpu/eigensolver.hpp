@@ -13,6 +13,6 @@ namespace gpu {
 template <typename T>
 auto eigh(ContextInternal& ctx, std::size_t m, std::size_t nEig, const api::ComplexType<T>* a,
           std::size_t lda, const api::ComplexType<T>* b, std::size_t ldb, const char range,
-          std::size_t* nEigOut, T* d, api::ComplexType<T>* v, std::size_t ldv) -> void;
+          T* d, api::ComplexType<T>* v, std::size_t ldv) -> void;
 }
 }  // namespace bipp
