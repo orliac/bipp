@@ -26,6 +26,7 @@ if(BIPP_CUDA OR BIPP_ROCM)
 		gpu/standard_synthesis.cpp
 		gpu/domain_partition.cu
 		gpu/util/solver_api.cpp
+        gpu/kernels/reverse.cu
 		gpu/kernels/gram.cu
 		gpu/kernels/scale_matrix.cu
 		gpu/kernels/apply_filter.cu

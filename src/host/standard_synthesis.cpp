@@ -119,9 +119,9 @@ auto StandardSynthesis<T>::collect(std::size_t nEig, T wl, const T* intervals,
         constexpr auto maxInt = static_cast<std::size_t>(std::numeric_limits<int>::max());
 
         ctx_->logger().log(BIPP_LOG_LEVEL_DEBUG,
-                           "Assigning eigenvalue {} (filtered {}) to inverval [{}, {}]",
-                           *(d.get() + idxEig), scale, intervals[idxInt * ldIntervals],
-                           intervals[idxInt * ldIntervals + 1]);
+                           "Assigning eigenvalue {} (scale {}, filtered {}) to inverval [{}, {}]",
+                           *(d.get() + idxEig), scale, *(dFiltered.get() + idxEig),
+                           intervals[idxInt * ldIntervals], intervals[idxInt * ldIntervals + 1]);
 
         for (std::size_t idxPix = 0; idxPix < nPixel_; idxPix += maxInt) {
           const auto nPixBlock = std::min(nPixel_ - idxPix, maxInt);

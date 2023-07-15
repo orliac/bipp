@@ -71,11 +71,15 @@ auto eigh(ContextInternal& ctx, std::size_t m, std::size_t nEig, const std::comp
   const std::size_t mReduced = indices.size();
 
   ctx.logger().log(BIPP_LOG_LEVEL_DEBUG, "Eigensolver: removing {} coloumns / rows", m - mReduced);
+  ctx.logger().log(BIPP_LOG_LEVEL_DEBUG, "Eigensolver: m {}, mReduced {}", m, mReduced);
 
   // copy lower triangle into buffer
   copy_lower_triangle_at_indices(m, indices, a, lda, aReduced, mReduced);
 
   const auto firstEigIndexFortran = mReduced - std::min(mReduced, nEig) + 1;
+
+  char range_ = range;
+  if (range == 'V') range_ = 'I';
 
   int hMeig = 0;
   if (b) {
@@ -84,13 +88,13 @@ auto eigh(ContextInternal& ctx, std::size_t m, std::size_t nEig, const std::comp
 
     copy_lower_triangle_at_indices(m, indices, b, ldb, bReduced, mReduced);
 
-    if (lapack::eigh_solve(LapackeLayout::COL_MAJOR, 1, 'V', range, 'L', mReduced, aReduced, mReduced,
+    if (lapack::eigh_solve(LapackeLayout::COL_MAJOR, 1, 'V', range_, 'L', mReduced, aReduced, mReduced,
                            bReduced, mReduced, 0, 0, firstEigIndexFortran, mReduced,
                            &hMeig, bufferD.get(), bufferV.get(), mReduced, bufferIfail.get())) {
       throw EigensolverError();
     }
   } else {
-    if (lapack::eigh_solve(LapackeLayout::COL_MAJOR, 'V', 'I', 'L', mReduced, aReduced, mReduced, 0,
+    if (lapack::eigh_solve(LapackeLayout::COL_MAJOR, 'V', range_, 'L', mReduced, aReduced, mReduced, 0,
                            0, firstEigIndexFortran, mReduced, &hMeig, bufferD.get(),
                            bufferV.get(), mReduced, bufferIfail.get())) {
       throw EigensolverError();
@@ -98,6 +102,8 @@ auto eigh(ContextInternal& ctx, std::size_t m, std::size_t nEig, const std::comp
   }
 
   const auto nEigOut = std::min<std::size_t>(hMeig, nEig);
+
+  ctx.logger().log(BIPP_LOG_LEVEL_DEBUG, "Eigensolver: nEigOut {}, hMeig {}, nEig {}", nEigOut, hMeig, nEig);
 
   auto bufferPtrD = bufferD.get();
   auto bufferPtrV = bufferV.get();
@@ -110,17 +116,16 @@ auto eigh(ContextInternal& ctx, std::size_t m, std::size_t nEig, const std::comp
 
   // copy in reverse order into output and pad to full size
   for (std::size_t col = 0; col < nEigOut; ++col) {
-    d[col] = bufferPtrD[col + hMeig - nEigOut];
+    d[col] = bufferPtrD[hMeig - col - 1];
   }
 
   if (mReduced == m) {
-  for (std::size_t col = 0; col < nEigOut; ++col) {
-    std::memcpy(v + col * ldv, bufferPtrV + (col + hMeig - nEigOut) * m,
-                m * sizeof(std::complex<T>));
+    for (std::size_t col = 0; col < nEigOut; ++col) {
+      std::memcpy(v + col * ldv, bufferPtrV + (hMeig - col - 1) * m, m * sizeof(std::complex<T>));
     }
   } else {
     for (std::size_t col = 0; col < nEigOut; ++col) {
-      const auto colPtr = bufferPtrV + (col + hMeig - nEigOut) * mReduced;
+      const auto colPtr = bufferPtrV + (hMeig - col - 1) * mReduced;
       for (std::size_t row = 0; row < mReduced; ++row) {
         v[col * ldv + indices[row]] = colPtr[row];
       }

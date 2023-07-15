@@ -116,14 +116,13 @@ auto StandardSynthesis<T>::collect(std::size_t nEig, T wl, const T* intervalsHos
 
       auto imgCurrent = img_.get() + (idxFilter * nIntervals_ + idxInt) * nPixel_;
       for (std::size_t idxEig = start; idxEig < start + size; ++idxEig) {
-        ctx_->logger().log(
-            BIPP_LOG_LEVEL_DEBUG, "Assigning eigenvalue {} (filtered {}) to inverval [{}, {}]",
-            *(DBufferHost.get() + idxEig), *(DFilteredBufferHost.get() + idxEig),
-            intervalsHost[idxInt * ldIntervals], intervalsHost[idxInt * ldIntervals + 1]);
         const auto scale = nz_vis > 0 ?  DFilteredBufferHost.get()[idxEig] / nz_vis : DFilteredBufferHost.get()[idxEig];
         auto unlayeredStatsCurrent = unlayeredStats.get() + nPixel_ * idxEig;
-        api::blas::axpy(queue.blas_handle(), nPixel_, &scale, unlayeredStatsCurrent, 1, imgCurrent,
-                        1);
+        ctx_->logger().log(BIPP_LOG_LEVEL_DEBUG,
+                           "Assigning eigenvalue {} (scale {}, filtered {}) to inverval [{}, {}]",
+                           *(DBufferHost.get() + idxEig), scale, *(DFilteredBufferHost.get() + idxEig),
+                           intervalsHost[idxInt * ldIntervals], intervalsHost[idxInt * ldIntervals + 1]);
+        api::blas::axpy(queue.blas_handle(), nPixel_, &scale, unlayeredStatsCurrent, 1, imgCurrent, 1);
       }
     }
   }

@@ -187,7 +187,6 @@ class IntensityFieldParameterEstimator(ParameterEstimator):
                     idx = np.clip(np.cumsum(D) / np.sum(D), 0, 1) <= self._sigma
                     D = D[idx]
                 else:
-                    print("-W- Considering all positive and negative eigenvalues!")
                     _, D, _ = bipp.pybipp.eigh(self._ctx, S.data.shape[0], S.data, 'A', G.data)
                 
                 D_all[i, : len(D)] = D

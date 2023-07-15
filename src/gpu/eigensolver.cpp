@@ -8,7 +8,8 @@
 #include "bipp/bipp.h"
 #include "bipp/config.h"
 #include "context_internal.hpp"
-#include "gpu/kernels//copy_at_indices.hpp"
+#include "gpu/kernels/reverse.hpp"
+#include "gpu/kernels/copy_at_indices.hpp"
 #include "gpu/util/blas_api.hpp"
 #include "gpu/util/runtime_api.hpp"
 #include "gpu/util/solver_api.hpp"
@@ -67,7 +68,8 @@ auto eigh(ContextInternal& ctx, std::size_t m, std::size_t nEig, const api::Comp
   }
 
   ctx.logger().log(BIPP_LOG_LEVEL_DEBUG, "Eigensolver: removing {} coloumns / rows", m - mReduced);
-
+  ctx.logger().log(BIPP_LOG_LEVEL_DEBUG, "Eigensolver: m {}, mReduced {}", m, mReduced);
+  
   if(m == mReduced) {
     api::memcpy_2d_async(aBuffer.get(), m * sizeof(ComplexType), a, lda * sizeof(ComplexType),
                          m * sizeof(ComplexType), m, api::flag::MemcpyDeviceToDevice,
@@ -78,6 +80,9 @@ auto eigh(ContextInternal& ctx, std::size_t m, std::size_t nEig, const api::Comp
     copy_matrix_from_indices(queue.device_prop(), queue.stream(), mReduced, indexBuffer.get(), a,
                              lda, aBuffer.get(), mReduced);
   }
+
+  char range_ = range;
+  if (range == 'V') range_ = 'I';
 
   int hMeig = 0;
 
@@ -95,32 +100,39 @@ auto eigh(ContextInternal& ctx, std::size_t m, std::size_t nEig, const api::Comp
                                ldb, bBuffer.get(), mReduced);
     }
 
-    eigensolver::solve(ctx, 'V', range, 'L', mReduced, aBuffer.get(), mReduced, bBuffer.get(),
+    eigensolver::solve(ctx, 'V', range_, 'L', mReduced, aBuffer.get(), mReduced, bBuffer.get(),
                        mReduced, 0, 0, firstEigIndexFortran, mReduced, &hMeig, dBuffer.get());
   } else {
-    eigensolver::solve(ctx, 'V', range, 'L', mReduced, aBuffer.get(), mReduced, 0, 0,
+    eigensolver::solve(ctx, 'V', range_, 'L', mReduced, aBuffer.get(), mReduced, 0, 0,
                        firstEigIndexFortran, mReduced, &hMeig, dBuffer.get());
   }
 
   const auto nEigOut = std::min<std::size_t>(hMeig, nEig);
+
+  ctx.logger().log(BIPP_LOG_LEVEL_DEBUG, "Eigensolver: nEigOut {}, hMeig {}, nEig {}", nEigOut, hMeig, nEig);
 
   if (nEigOut < nEig) api::memset_async(d, 0, nEig * sizeof(ScalarType), queue.stream());
 
   if (nEigOut < nEig || m != mReduced)
     api::memset_async(v, 0, nEig * m * sizeof(ComplexType), queue.stream());
 
+
+  // reverse order, such that large eigenvalues are first
+  if (hMeig > 1)
+      reverse_1d<ScalarType>(queue, hMeig, dBuffer.get());
+
   // copy results to output
   api::memcpy_async(d, dBuffer.get() + hMeig - nEigOut, nEigOut * sizeof(ScalarType),
                     api::flag::MemcpyDeviceToDevice, queue.stream());
 
   if (m == mReduced) {
+    reverse_2d(queue, m, hMeig, aBuffer.get(), m);
     api::memcpy_2d_async(v, ldv * sizeof(ComplexType), aBuffer.get() + (hMeig - nEigOut) * m,
                          m * sizeof(ComplexType), m * sizeof(ComplexType), nEigOut,
                          api::flag::MemcpyDeviceToDevice, queue.stream());
   } else {
     copy_matrix_rows_to_indices(queue.device_prop(), queue.stream(), mReduced, nEigOut,
-                                indexBuffer.get(), aBuffer.get() + (hMeig - nEigOut) * mReduced,
-                                mReduced, v, ldv);
+                                indexBuffer.get(), aBuffer.get(), mReduced, v, ldv);
   }
 
   ctx.logger().log_matrix(BIPP_LOG_LEVEL_DEBUG, "eigenvalues", nEig, 1, d, nEig);
