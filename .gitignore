@@ -6,3 +6,4 @@ docs/xml/
 python/bipp.egg-info/
 bipp.egg-info/
 _skbuild/
+*~
