@@ -693,12 +693,8 @@ class SKALowMeasurementSet(MeasurementSet):
             Beamweight computer.
         """
         if self._beamformer is None:
-            # MWA does not do any beamforming.
-            # Given the single-antenna station model in MS files from MWA, this can be seen as
-            # Matched-Beamforming, with a single beam output per station.
             XYZ = self.instrument._layout
             beam_id = np.unique(XYZ.index.get_level_values("STATION_ID"))
-
             direction = self.field_center
             beam_config = [(_, _, direction) for _ in beam_id]
             self._beamformer = beamforming.MatchedBeamformerBlockIdentity(beam_config)
