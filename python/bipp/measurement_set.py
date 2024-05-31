@@ -9,7 +9,6 @@ Measurement Set (MS) readers and tools.
 """
 
 import pathlib
-
 import astropy.coordinates as coord
 import astropy.table as tb
 import astropy.time as time
@@ -22,6 +21,8 @@ import bipp.imot_tools.util.argcheck as chk
 import bipp.beamforming as beamforming
 import bipp.instrument as instrument
 import bipp.statistics as vis
+from time import perf_counter as pcf
+import sys
 
 
 @chk.check(
@@ -78,6 +79,29 @@ def filter_data(S, W):
     W_f = beamforming.BeamWeights(data=w_f, ant_idx=W.index[0], beam_idx=beam_idx2)
 
     return S_f, W_f
+
+
+def time_idx_in_slice(slice, idx):
+    if (idx < slice.start) or (idx >= slice.stop):
+        return False
+    if (idx - slice.start) % slice.step != 0:
+        return False
+    return True
+
+def check_continuity(list):
+    return not any(a+1!=b for a, b in zip(list, list[1:]))
+
+
+# Define chunks of size chunk_size. chunk_size should be optimized for fastest
+# block reading (see readms app from casacore for testing around -chansize paramater)
+def chunk_channel_block(channel_block, chunk_size):
+    block_size = len(channel_block)
+    for chunk_start in range(0, block_size, chunk_size):
+        chunk_end = chunk_start + chunk_size - 1
+        if (chunk_end >= block_size):
+            chunk_end = block_size - 1
+        #print(chunk_start, chunk_end, chunk_end - chunk_start + 1)
+        yield [chunk_start, chunk_end]
 
 
 class MeasurementSet:
@@ -160,7 +184,6 @@ class MeasurementSet:
             # conventions may be used.
             query = f"select CHAN_FREQ, CHAN_WIDTH from {self._msf}::SPECTRAL_WINDOW"
             table = ct.taql(query)
-
             f = table.getcell("CHAN_FREQ", 0).flatten() * u.Hz
             f_id = range(len(f))
             self._channels = tb.QTable(dict(CHANNEL_ID=f_id, FREQUENCY=f))
@@ -221,6 +244,158 @@ class MeasurementSet:
         """
         raise NotImplementedError
 
+    ########################################################################################
+    ########################################################################################
+    
+    @chk.check(
+        dict(
+            channel_id=chk.accept_any(chk.has_integers, chk.is_instance(slice)),
+            time_id=chk.accept_any(chk.is_integer, chk.is_instance(slice)),
+            column=chk.is_instance(str),
+        )
+    )
+    def new_visibilities(self, channel_id, time_id, column):
+
+        query = f"select NAME from {self._msf}::ANTENNA"
+        antenna_table = ct.taql(query)
+        n_ant = len(antenna_table.getcol("NAME"))
+        print(f"-I- number of antenna =", n_ant, flush=True)
+
+        if column not in ct.taql(f"select * from {self._msf}").colnames():
+            raise ValueError(f"column={column} does not exist in {self._msf}::MAIN.")
+
+        # Check whether channels is a single block
+        channel_block = True
+        if type(channel_id) == slice:
+            if (abs(channel_id.step) != 1):
+                channel_block = False
+        else:
+            channel_id = sorted(channel_id)
+            nchan = len(channel_id)
+            if nchan > 1:
+                channel_block = check_continuity(channel_id)
+        
+        print(f"-I- requested {len(channel_id)} channels over the {len(self.channels['CHANNEL_ID'])} available") 
+        channel_id = self.channels["CHANNEL_ID"][channel_id]
+        if channel_block:
+            block_size = len(channel_id)
+            if block_size == 0:
+                raise Exception("Empty block of channels to process")
+            
+        if chk.is_integer(time_id):
+            time_id = slice(time_id, time_id + 1, 1)
+        
+
+        # Start reading the table
+        table = ct.table(self._msf)
+
+        vis = np.zeros((n_ant, n_ant), dtype=complex)
+        
+        #for sub_table in table.iter("TIME", sort=False):
+        for idx, sub_table in enumerate(table.iter("TIME", sort=False)):
+
+            # Skip unwanted epochs            
+            if not time_idx_in_slice(time_id, idx):
+                continue
+
+            t = time.Time(sub_table.calc("MJD(TIME)")[0], format="mjd", scale="utc")
+
+            f = self.channels["FREQUENCY"]            
+            
+            ant1 = sub_table.getcol("ANTENNA1")  # (N_entry,)
+            ant2 = sub_table.getcol("ANTENNA2")  # (N_entry,)
+            
+            # If processing a (single) block of channels, then chunk it and loop over to read data.
+            # Otherwise, loop over single channels
+            # TODO(EO): check whether blocking would help for close enough channels.
+            chunk_size = 8
+            if channel_block:
+                for chunk in chunk_channel_block(channel_id, chunk_size):
+                    data = sub_table.getcolslice(column, blc=(chunk[0], 0), trc=(chunk[1], 3), inc=(1,3))
+                    data = np.average(data[:, :, [0,1]], axis=2)
+                    flag = sub_table.getcolslice('FLAG', blc=(chunk[0], 0), trc=(chunk[1], 3), inc=(1,3))
+                    flag = np.any(flag[:, :, [0,1]], axis=2)
+                    data[flag] = 0
+                    for i in range(0, (chunk[1] - chunk[0] + 1)):
+                        vis[ant2, ant1] = data[:, i].conj()
+                        yield t, f[chunk[0] + i], vis
+            else:
+                for chan in channel_id:
+                    data = sub_table.getcolslice(column, blc=(chan, 0), trc=(chan, 3), inc=(1,3))
+                    data = np.average(data[:, :, [0,1]], axis=2)
+                    flag = sub_table.getcolslice('FLAG', blc=(chan, 0), trc=(chan, 3), inc=(1,3))
+                    flag = np.any(flag[:, :, [0,1]], axis=2)
+                    data[flag] = 0
+                    vis[ant2, ant1] = data[:, 0].conj()
+                    yield t, f[chan], vis
+            """
+            #print(channel_id)
+            chunk_size = 8
+            for i in range(0, len(channel_id), chunk_size):
+                #print(i, i + chunk_size)
+                t_ = pcf()
+                data = sub_table.getcolslice(column, blc=(i, 0), trc=(i+chunk_size-1,3), inc=(1,3))
+                data = np.average(data[:, :, [0,1]], axis=2)
+                #print(data)
+                #print(data.shape)
+                #for ii in range(i, i+chunk_size):
+                for ii in range(0, chunk_size):
+                    vis[ant2, ant1] = data[:,ii].conj()
+                    yield t, f[ii], vis
+                print(f"{(pcf()-t_)*1000:.2f} ms for channel block [{i}, {i+chunk_size-1}] >>>>>>>>>>>>>>>>>>>>>>>>>>>>")
+            #sys.exit(0)
+            """
+            """
+            for chid in channel_id:
+                t_ = pcf()
+                data = sub_table.getcolslice(column, blc=(chid, 0), trc=(chid,3), inc=(1,3))
+                data = np.average(data[:, :, [0,1]], axis=2)
+                flag = sub_table.getcolslice(column, blc=(chid, 0), trc=(chid,3), inc=(1,3))
+                flag = np.any(flag[:, :, [0,1]], axis=2)
+                data[flag] = 0
+                vis[ant2, ant1] = data[:,0].conj()
+                yield t, f[chid], vis
+                print(f"{(pcf()-t_)*1000:.2f} ms for chid {chid} >>>>>>>>>>>>>>>>>>>>>>>>>>>>")
+            """
+            """
+            # Average XX and YY correlations, single channel
+            data1 = np.average(data[:, :, [0, 3]], axis=2)[:, 0]
+            print(data1)
+            print(data1.shape)
+            
+            flag1 = np.any(flag[:, :, [0, 3]], axis=2)[:, 0]
+            print("data1.shape =", data1.shape, " (after averaging)")
+            t3 = pcf()
+            print(f"                                          t3 = {(t3-t2)*1000:.2f} ms (first channel only)")
+            
+            # Average XX and YY correlations, all channels
+            data2 = np.average(data[:, :, [0, 3]], axis=2)#[:, channel_id]
+            flag2 = np.any(flag[:, :, [0, 3]], axis=2)#[:, channel_id]
+            print("data2.shape =", data2.shape, " (after averaging)")
+            t4 = pcf()
+            print(f"                                          t4 = {(t4-t3)*1000:.2f} ms (all channels)")
+            
+
+            # Average XX and YY correlations, selected channels
+            data = np.average(data[:, :, [0, 3]], axis=2)[:, channel_id]
+            flag = np.any(flag[:, :, [0, 3]], axis=2)[:, channel_id]
+            print("data.shape =", data.shape, " (after averaging)")
+            t5 = pcf()
+            print(f"                                          t5 = {(t5-t2)*1000:.2f} ms (selected channels)")
+
+            
+            # Set broken visibilities to 0
+            data[flag] = 0
+
+            # Prepare lower triangular S as expected by BIPP
+            for j in channel_id:
+                vis[ant2, ant1] = data[:,j].conj()
+                yield t, f[j], vis
+            """
+    ########################################################################################
+    ########################################################################################
+
+
     @chk.check(
         dict(
             channel_id=chk.accept_any(chk.has_integers, chk.is_instance(slice)),
@@ -255,12 +430,19 @@ class MeasurementSet:
         """
         if column not in ct.taql(f"select * from {self._msf}").colnames():
             raise ValueError(f"column={column} does not exist in {self._msf}::MAIN.")
-
-        channel_id = self.channels["CHANNEL_ID"][channel_id]
+        
         if chk.is_integer(time_id):
             time_id = slice(time_id, time_id + 1, 1)
+        
+        print("????:", channel_id)
+        channel_id = self.channels["CHANNEL_ID"][channel_id]
+        
+
+
         N_time = len(self.time)
+        
         time_start, time_stop, time_step = time_id.indices(N_time)
+        print(N_time, time_start, time_stop, time_step)
 
         # Only a subset of the MAIN table's columns are needed to extract visibility information.
         # As such, it makes sense to construct a TaQL query that only extracts the columns of
@@ -280,14 +462,24 @@ class MeasurementSet:
             beam_id_1 = sub_table.getcol("ANTENNA2")  # (N_entry,)
             data_flag = sub_table.getcol("FLAG")  # (N_entry, N_channel, 4)
             data = sub_table.getcol(column)  # (N_entry, N_channel, 4)
-
+            #print("data before averaging")
+            #print(data)
+            #print(data.shape)
+            """
             try:
                 weight_spectrum = sub_table.getcol("WEIGHT_SPECTRUM")
             except:
                 weight_spectrum = None
 
+            print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! ignoring weight spectrum")
+            """
+            weight_spectrum = None
+
             # We only want XX and YY correlations
             data = np.average(data[:, :, [0, 3]], axis=2)[:, channel_id]
+            #print("data after averaging")
+            #print(data)
+            #print(data.shape)
             data_flag = np.any(data_flag[:, :, [0, 3]], axis=2)[:, channel_id]
 
             # Set broken visibilities to 0
