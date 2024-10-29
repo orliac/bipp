@@ -59,6 +59,11 @@ option(BIPP_VC "Use VC vectorization library" OFF)
 option(BIPP_OMP "Use OpenMP for multi-threading" ON)
 option(BIPP_MPI "Use MPI for multi-process parallization" OFF)
 
+option(EOSS "Use EO SS" OFF)
+#if (EOSS)
+#  add_definitions(-DEOSS)
+#endif()
+
 option(BIPP_INSTALL_LIB "Install library" ON)
 cmake_dependent_option(BIPP_INSTALL_PYTHON "Install Python module" ON "BIPP_PYTHON" OFF)
 set(BIPP_INSTALL_PYTHON_PREFIX "" CACHE STRING "Python install prefix. If not set, CMAKE_INSTALL_PREFIX will be used.")
@@ -267,6 +272,12 @@ else()
   find_package(spdlog CONFIG REQUIRED)
   list(APPEND BIPP_EXTERNAL_LIBS spdlog::spdlog)
 endif()
+
+# add json parser
+include(FetchContent)
+FetchContent_Declare(json URL https://github.com/nlohmann/json/releases/download/v3.11.3/json.tar.xz)
+FetchContent_MakeAvailable(json)
+list(APPEND BIPP_INCLUDE_DIRS ${json_SOURCE_DIR}/include) # nlohmann_json::nlohmann_json)
 
 # check if C api is available for blas and lapack
 # include(CheckCXXSymbolExists)

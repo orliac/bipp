@@ -21,6 +21,10 @@
 #include "host/virtual_vis.hpp"
 #include "memory/copy.hpp"
 #include "nufft_util.hpp"
+#include <fstream>
+#include <iostream>
+#include <nlohmann/json.hpp>
+using json = nlohmann::json;
 
 namespace bipp {
 namespace host {
@@ -171,6 +175,9 @@ auto NufftSynthesis<T>::process(CollectorInterface<T>& collector) -> void {
   auto output = HostArray<std::complex<T>, 1>(ctx_->host_alloc(), nPixel_);
 
   for (const auto& [inputBegin, inputSize] : inputPartition.groups()) {
+
+    printf("inputSize = %ld\n", inputSize);
+    
     if (!inputSize) continue;
     auto uvwXSlice = uvwX.sub_view(inputBegin, inputSize);
     auto uvwYSlice = uvwY.sub_view(inputBegin, inputSize);
@@ -204,25 +211,64 @@ auto NufftSynthesis<T>::process(CollectorInterface<T>& collector) -> void {
         ctx_->logger().log_matrix(BIPP_LOG_LEVEL_DEBUG, "NUFFT output coordinate z", pixelZSlice);
 
         // Approximate sum through nufft
+        /**/
+        json jo;
+        jo["tolerance"] = opt_.tolerance; 
+        jo["inputSize"] = inputSize;
+        for (std::size_t i=0; i<inputSize; i++) {
+          jo["uvwXSlice"].push_back(uvwXSlice[i]);
+          jo["uvwYSlice"].push_back(uvwYSlice[i]);
+          jo["uvwZSlice"].push_back(uvwZSlice[i]);
+        }
+        jo["imgSize"] = imgSize;
+        for (std::size_t i=0; i<imgSize; i++) {
+          jo["pixelXSlice"].push_back(pixelXSlice[i]);
+          jo["pixelYSlice"].push_back(pixelYSlice[i]);
+          jo["pixelZSlice"].push_back(pixelZSlice[i]);
+        }
+        /**/
         ctx_->logger().log(BIPP_LOG_LEVEL_DEBUG, "nufft size {}, calling fiNUFFT", inputSize);
         Nufft3d3<T> transform(1, opt_.tolerance, 1, inputSize, uvwXSlice.data(), uvwYSlice.data(),
                               uvwZSlice.data(), imgSize, pixelXSlice.data(), pixelYSlice.data(),
                               pixelZSlice.data());
 
-          for (std::size_t j = 0; j < nImages_; ++j) {
-            auto virtVisCurrentSlice =
-                virtualVis.slice_view(j).sub_view(inputBegin, inputSize);
-            ctx_->logger().log_matrix(BIPP_LOG_LEVEL_DEBUG, "NUFFT input", virtVisCurrentSlice);
-            transform.execute(virtVisCurrentSlice.data(), output.data());
-            ctx_->logger().log_matrix(BIPP_LOG_LEVEL_DEBUG, "NUFFT output",
-                                      output.sub_view({0}, {imgSize}));
+        for (std::size_t j = 0; j < nImages_; ++j) {
+          printf("@@@ call j=%d/%d\n", j, nImages_-1);
+          auto virtVisCurrentSlice =
+              virtualVis.slice_view(j).sub_view(inputBegin, inputSize);
+          ctx_->logger().log_matrix(BIPP_LOG_LEVEL_DEBUG, "NUFFT input", virtVisCurrentSlice);
+          transform.execute(virtVisCurrentSlice.data(), output.data());
+          ctx_->logger().log_matrix(BIPP_LOG_LEVEL_DEBUG, "NUFFT output",
+                                    output.sub_view({0}, {imgSize}));
+          /**/
+          for (std::size_t i=0; i<inputSize; i++) {
+            jo["images"][std::to_string(j)]["virtVisCurrentSlice"]["real"].push_back(virtVisCurrentSlice[i].real());
+            jo["images"][std::to_string(j)]["virtVisCurrentSlice"]["imag"].push_back(virtVisCurrentSlice[i].imag());
+          }
+          /**/
 
-            auto* __restrict__ outputPtr = output.data();
-            auto* __restrict__ imgPtr = &img_[{imgBegin, j}];
-            for (std::size_t k = 0; k < imgSize; ++k) {
-              imgPtr[k] += outputPtr[k].real();
+          auto* __restrict__ outputPtr = output.data();
+          /**/
+          for (std::size_t i=0; i<imgSize; i++) {
+            jo["images"][std::to_string(j)]["output"]["real"].push_back(outputPtr[i].real());
+            jo["images"][std::to_string(j)]["output"]["imag"].push_back(outputPtr[i].imag());
+            if (i<3) {
+              printf("images.output.real[%d] = %12.7f\n", outputPtr[i].real());
             }
           }
+          /**/
+          
+          //auto* __restrict__ outputPtr = output.data();
+          auto* __restrict__ imgPtr = &img_[{imgBegin, j}];
+          for (std::size_t k = 0; k < imgSize; ++k) {
+            imgPtr[k] += outputPtr[k].real();
+          }
+        }
+        /**/
+        std::fstream File;
+        File.open(R"(bipp_nufft_test.json)", std::ios::out);
+        File << jo;
+        /**/
       }
     }
   }

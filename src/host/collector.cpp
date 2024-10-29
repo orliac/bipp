@@ -24,6 +24,7 @@ struct SerialInfo {
   T wl;
   std::size_t nVis;
   std::size_t vShape[2];
+  std::size_t wShape[2];
   std::size_t dMaskedShape[2];
   std::size_t xyzUvwShape[2];
 };
@@ -36,6 +37,7 @@ Collector<T>::Collector(std::shared_ptr<ContextInternal> ctx) : ctx_(std::move(c
   vData_.reserve(100);
   dMaskedData_.reserve(100);
   xyzUvwData_.reserve(100);
+  wData_.reserve(100);
 }
 
 template <typename T>
@@ -45,15 +47,17 @@ auto Collector<T>::clear() -> void {
   vData_.clear();
   dMaskedData_.clear();
   xyzUvwData_.clear();
+  wData_.clear();
   wlData_.reserve(100);
   vData_.reserve(100);
   dMaskedData_.reserve(100);
   xyzUvwData_.reserve(100);
+  wData_.reserve(100);
 }
 
 template <typename T>
 auto Collector<T>::collect(T wl, const std::size_t nVis, ConstView<std::complex<T>, 2> v,
-                           ConstHostView<T, 2> dMasked, ConstView<T, 2> xyzUvw) -> void {
+                           ConstHostView<T, 2> dMasked, ConstView<T, 2> xyzUvw, ConstView<std::complex<T>, 2> w) -> void {
 
   wlData_.emplace_back(wl);
 
@@ -61,12 +65,15 @@ auto Collector<T>::collect(T wl, const std::size_t nVis, ConstView<std::complex<
 
   vData_.emplace_back(ctx_->host_alloc(), v.shape());
   copy(ConstHostView<std::complex<T>, 2>(v), vData_.back());
-
+  
   dMaskedData_.emplace_back(ctx_->host_alloc(), dMasked.shape());
   copy(dMasked, dMaskedData_.back());
 
   xyzUvwData_.emplace_back(ctx_->host_alloc(), xyzUvw.shape());
   copy(ConstHostView<T, 2>(xyzUvw), xyzUvwData_.back());
+
+  wData_.emplace_back(ctx_->host_alloc(), w.shape());
+  copy(ConstHostView<std::complex<T>, 2>(w), wData_.back());
 }
 
 template <typename T>
@@ -75,7 +82,7 @@ auto Collector<T>::get_data() const -> std::vector<typename CollectorInterface<T
   std::vector<DataType> data;
   data.reserve(this->size());
   for(std::size_t i = 0; i < this->size(); ++i) {
-    data.emplace_back(wlData_[i], nVisData_[i], vData_[i], dMaskedData_[i], xyzUvwData_[i]);
+      data.emplace_back(wlData_[i], nVisData_[i], vData_[i], dMaskedData_[i], xyzUvwData_[i], wData_[i]);
   }
   return data;
 }
@@ -95,6 +102,7 @@ auto Collector<T>::serialize() const -> HostArray<char, 1> {
     totalNumBytes += vData_[i].size_in_bytes();
     totalNumBytes += dMaskedData_[i].size_in_bytes();
     totalNumBytes += xyzUvwData_[i].size_in_bytes();
+    totalNumBytes += wData_[i].size_in_bytes();
   }
 
 
@@ -119,6 +127,8 @@ auto Collector<T>::serialize() const -> HostArray<char, 1> {
     info.dMaskedShape[1] = dMaskedData_[i].shape(1);
     info.xyzUvwShape[0] = xyzUvwData_[i].shape(0);
     info.xyzUvwShape[1] = xyzUvwData_[i].shape(1);
+    info.wShape[0] = wData_[i].shape(0);
+    info.wShape[1] = wData_[i].shape(1);
 
     std::memcpy(data.data() + currentOffset, &info, sizeof(decltype(info)));
     currentOffset += sizeof(SerialInfo<T>);
@@ -127,7 +137,7 @@ auto Collector<T>::serialize() const -> HostArray<char, 1> {
                         reinterpret_cast<std::complex<T>*>(data.data() + currentOffset),
                         vData_[i].shape(), {1, vData_[i].shape(0)}));
     currentOffset += vData_[i].size_in_bytes();
-
+    
     copy(dMaskedData_[i], HostView<T, 2>(reinterpret_cast<T*>(data.data() + currentOffset),
                                          dMaskedData_[i].shape(), {1, dMaskedData_[i].shape(0)}));
     currentOffset += dMaskedData_[i].size_in_bytes();
@@ -135,6 +145,11 @@ auto Collector<T>::serialize() const -> HostArray<char, 1> {
     copy(xyzUvwData_[i], HostView<T, 2>(reinterpret_cast<T*>(data.data() + currentOffset),
                                         xyzUvwData_[i].shape(), {1, xyzUvwData_[i].shape(0)}));
     currentOffset += xyzUvwData_[i].size_in_bytes();
+
+    copy(wData_[i], HostView<std::complex<T>, 2>(
+                        reinterpret_cast<std::complex<T>*>(data.data() + currentOffset),
+                        wData_[i].shape(), {1, wData_[i].shape(0)}));
+    currentOffset += wData_[i].size_in_bytes();
 
     assert(currentOffset <= data.size_in_bytes());
   }
@@ -152,6 +167,7 @@ auto Collector<T>::deserialize(ConstHostView<char, 1> serialData) -> void {
   vData_.clear();
   dMaskedData_.clear();
   xyzUvwData_.clear();
+  wData_.clear();
 
   // read total number of steps
   std::size_t numSteps = 0;
@@ -163,6 +179,7 @@ auto Collector<T>::deserialize(ConstHostView<char, 1> serialData) -> void {
   vData_.reserve(numSteps);
   dMaskedData_.reserve(numSteps);
   xyzUvwData_.reserve(numSteps);
+  wData_.reserve(numSteps);
 
   std::size_t currentOffset = sizeof(decltype(numSteps));
   for (std::size_t i = 0; i < numSteps; ++i) {
@@ -182,8 +199,7 @@ auto Collector<T>::deserialize(ConstHostView<char, 1> serialData) -> void {
              vData_[i].shape(), {1, vData_[i].shape(0)}),
          vData_[i]);
     currentOffset += vData_[i].size_in_bytes();
-
-
+    
     dMaskedData_.emplace_back(
         HostArray<T, 2>(ctx_->host_alloc(), {info.dMaskedShape[0], info.dMaskedShape[1]}));
     copy(ConstHostView<T, 2>(reinterpret_cast<const T*>(serialData.data() + currentOffset),
@@ -197,6 +213,14 @@ auto Collector<T>::deserialize(ConstHostView<char, 1> serialData) -> void {
                              xyzUvwData_[i].shape(), {1, xyzUvwData_[i].shape(0)}),
          xyzUvwData_[i]);
     currentOffset += xyzUvwData_[i].size_in_bytes();
+
+    wData_.emplace_back(
+        HostArray<std::complex<T>, 2>(ctx_->host_alloc(), {info.wShape[0], info.wShape[1]}));
+    copy(ConstHostView<std::complex<T>, 2>(
+             reinterpret_cast<const std::complex<T>*>(serialData.data() + currentOffset),
+             wData_[i].shape(), {1, wData_[i].shape(0)}),
+         wData_[i]);
+    currentOffset += wData_[i].size_in_bytes();
 
     assert(currentOffset <= serialData.size_in_bytes());
   }

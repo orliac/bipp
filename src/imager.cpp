@@ -28,6 +28,12 @@
 #include "gpu/util/runtime_api.hpp"
 #endif
 
+#include <fstream>
+#include <iostream>
+#include <nlohmann/json.hpp>
+using json = nlohmann::json;
+
+
 namespace bipp {
 template <typename T>
 static auto center_vector(std::size_t n, const T* __restrict__ in, T* __restrict__ out) -> void {
@@ -181,6 +187,9 @@ auto Imager<T>::collect(T wl, const std::function<void(std::size_t, std::size_t,
     auto vUnbeamCast =
         ConstView<std::complex<T>, 2>(reinterpret_cast<const std::complex<T>*>(vUnbeam.data()),
                                       vUnbeam.shape(), vUnbeam.strides());
+    //auto wCast =
+    //    ConstView<std::complex<T>, 2>(reinterpret_cast<const std::complex<T>*>(wDevice.data()),
+    //                                  wDevice.shape(), wDevice.strides());
 
     auto dHostArray = queue.create_pinned_array<T, 1>(nEig);
 
@@ -194,10 +203,10 @@ auto Imager<T>::collect(T wl, const std::function<void(std::size_t, std::size_t,
       eigMaskFunc(idxLevel, nEig, dMaskedArray.slice_view(idxLevel).data());
       scale_vector(nEig, visScale, dMaskedArray.slice_view(idxLevel).data());
     }
-
+    
     collector_->collect(
         wl, nVis, vUnbeamCast, dMaskedArray,
-        synthesis_->type() == SynthesisType::Standard ? xyzCentered : uvwDevice.view());
+        synthesis_->type() == SynthesisType::Standard ? xyzCentered : uvwDevice.view(), w);
 
     if (collector_->size() >= collectGroupSize_) {
       synthesis_->process(*collector_);
@@ -233,13 +242,16 @@ auto Imager<T>::collect(T wl, const std::function<void(std::size_t, std::size_t,
     const auto nEig = pev.first;
     const auto nVis = pev.second;
 
+    
+
     const T visScale = synthesis_->normalize_by_nvis() ? 1 / static_cast<T>(nVis) : 1;
     ctx.logger().log(BIPP_LOG_LEVEL_DEBUG, "imager nVis = {}, visScale = {}", nVis, visScale);
 
     auto d = dArray.sub_view(0, nEig);
+    printf("d.size() = %ld vs nEig = %ld\n", d.size(), nEig);
 
     auto vUnbeam = vUnbeamArray.sub_view({0, 0}, {nAntenna, nEig});
-
+    
     auto dMaskedArray = HostArray<T, 2>(ctx.host_alloc(), {d.size(), nImages});
 
     for (std::size_t idxLevel = 0; idxLevel < nImages; ++idxLevel) {
@@ -248,8 +260,59 @@ auto Imager<T>::collect(T wl, const std::function<void(std::size_t, std::size_t,
       scale_vector(nEig, visScale, dMaskedArray.slice_view(idxLevel).data());
     }
 
+    json jo;
+
+    // d: raw eigenvalues [nEig]
+    for (int i=0; i<nEig; i++) {
+      jo["d"].push_back(d.data()[i]);
+    }
+
+    // dMasked: eigenvalues per energy level [nEig x nImages]
+    for (std::size_t idxLevel = 0; idxLevel < nImages; ++idxLevel) {
+      for (int i=0; i<nEig; i++) {
+        //printf("%ld %ld %12.5f\n", idxLevel, i, dMaskedArray.slice_view(idxLevel).data()[i]);
+        jo["dMasked"].push_back(dMaskedArray.slice_view(idxLevel).data()[i]);
+      }
+    }
+    fflush(stdout);
+    
+    for (int i=0; i<nAntenna; i++) {
+      for (int j=0; j<nEig; j++) {
+        jo["vUnbeam_real"].push_back(vUnbeam.data()[j*nAntenna + i].real());
+        jo["vUnbeam_imag"].push_back(vUnbeam.data()[j*nAntenna + i].imag());
+        //if (j==0) {
+        //  printf("v[%ld,%ld] =  %12.6f %12.6f\n", i, j, vUnbeam.data()[j*nAntenna + i].real(), vUnbeam.data()[j*nAntenna + i].imag());
+        //}
+      }
+    }
+
+    for (int i=0; i<nAntenna; i++) {
+      for (int j=0; j<nBeam; j++) {
+        jo["w_real"].push_back(wHost.data()[j*nAntenna + i].real());
+        jo["w_imag"].push_back(wHost.data()[j*nAntenna + i].imag());
+      }
+    }
+
+    for (int i=0; i<3; i++) {
+      for (int j=0; j<nAntenna; j++) {
+        jo["xyz"].push_back(xyzHost.slice_view(i).data()[j]);
+      }
+    }
+    
+    jo["wl"] = wl;
+    jo["nVis"] = nVis;
+    jo["nImages"] = nImages;
+    jo["nEig"] = nEig;
+    jo["nAntenna"] = nAntenna;
+    jo["nBeam"] = nBeam;
+    jo["visScale"] = visScale;
+    
+    std::fstream File;
+    File.open(R"(bipp_cpu_ss.json)", std::ios::out);
+    File << jo;
+    
     collector_->collect(wl, nVis, vUnbeam, dMaskedArray,
-                        synthesis_->type() == SynthesisType::Standard ? xyzHost : uvwHost);
+                        synthesis_->type() == SynthesisType::Standard ? xyzHost : uvwHost, wHost);
 
     if (collector_->size() >= collectGroupSize_) {
       synthesis_->process(*collector_);

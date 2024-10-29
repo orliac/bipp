@@ -21,7 +21,7 @@ public:
   explicit Collector(std::shared_ptr<ContextInternal> ctx);
 
   auto collect(T wl, const std::size_t nVis, ConstView<std::complex<T>, 2> v,
-               ConstHostView<T, 2> dMasked, ConstView<T, 2> xyzUvw) -> void override;
+               ConstHostView<T, 2> dMasked, ConstView<T, 2> xyzUvw, ConstView<std::complex<T>, 2> w) -> void override;
 
   auto serialize() const -> HostArray<char, 1> override;
 
@@ -43,6 +43,7 @@ private:
   std::vector<T> wlData_;
   std::vector<std::size_t> nVisData_;
   std::vector<HostArray<std::complex<T>, 2>> vData_;
+  std::vector<HostArray<std::complex<T>, 2>> wData_;
   std::vector<HostArray<T, 2>> dMaskedData_;
   std::vector<HostArray<T, 2>> xyzUvwData_;
 };

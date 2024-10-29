@@ -12,8 +12,15 @@
 
 static auto get_lofar_input_json() -> const nlohmann::json& {
   static nlohmann::json data = []() {
-    std::ifstream file(std::string(BIPP_TEST_DATA_DIR) + "/lofar_input.json");
+    std::string filename;
+    if (getenv("BIPP_TEST_JASON_INPUT") != NULL) {
+        filename = std::string(getenv("BIPP_TEST_JASON_INPUT"));
+    } else {
+        filename = std::string(BIPP_TEST_DATA_DIR) + "/lofar_input.json";
+    }
+    std::cout << "input filename = " << filename << std::endl;
     nlohmann::json j;
+    std::ifstream file(filename);
     file >> j;
     return j;
   }();
@@ -24,17 +31,21 @@ static auto get_lofar_input_json() -> const nlohmann::json& {
 template <typename T>
 static auto get_lofar_ss_output_json() -> const nlohmann::json& {
   static nlohmann::json data = []() {
-    if constexpr (std::is_same_v<T, float>) {
-      std::ifstream file(std::string(BIPP_TEST_DATA_DIR) + "/lofar_ss_output_single.json");
-      nlohmann::json j;
-      file >> j;
-      return j;
+    std::string filename;
+    if (getenv("BIPP_TEST_JASON_OUTPUT") != NULL) {
+      filename = std::string(getenv("BIPP_TEST_JASON_OUTPUT"));
     } else {
-      std::ifstream file(std::string(BIPP_TEST_DATA_DIR) + "/lofar_ss_output_double.json");
-      nlohmann::json j;
-      file >> j;
-      return j;
+      if constexpr (std::is_same_v<T, float>) {
+        filename = std::string(BIPP_TEST_DATA_DIR) + "/lofar_ss_output_single.json";
+      } else {
+        filename = std::string(BIPP_TEST_DATA_DIR) + "/lofar_ss_output_double.json";
+      }
     }
+    std::cout << "output filename = " << filename << std::endl;
+    nlohmann::json j;
+    std::ifstream file(filename);
+    file >> j;
+    return j;
   }();
   return data;
 }
@@ -93,7 +104,7 @@ protected:
     const T wl = ValueType(data["wl"]);
     const std::size_t nAntenna = data["n_antenna"];
     const std::size_t nBeam = data["n_beam"];
-    const std::size_t nEig = data["n_eig_int"];
+    //const std::size_t nEig = data["n_eig_int"];
     const std::size_t nIntervals = data["intervals_int"].size();
     const auto intervals = read_json_scalar_2d<T>(data["intervals_int"]);
 
@@ -107,10 +118,14 @@ protected:
                                       pixelX.data(), pixelY.data(), pixelZ.data());
 
     // map intervals to mask
+    
     auto eigMaskFunc = [&](std::size_t idxBin, std::size_t nEigOut, T* d) -> void {
       const T dMin = intervals[idxBin * 2];
       const T dMax = intervals[idxBin * 2 + 1];
 
+      //EO
+      const std::size_t nEig = nEigOut;
+      
       std::size_t idxEig = 0;
       for(; idxEig < nEigOut - nEig; ++idxEig) {
         d[idxEig] = 0;
@@ -126,23 +141,24 @@ protected:
       auto xyz = read_json_scalar_2d<ValueType>(itData["xyz"]);
       auto w = read_json_complex_2d<ValueType>(itData["w_real"], itData["w_imag"]);
       auto s = read_json_complex_2d<ValueType>(itData["s_real"], itData["s_imag"]);
-
+      
       imager.collect(nAntenna, nBeam, wl, eigMaskFunc, s.data(), nBeam, w.data(), nAntenna,
                      xyz.data(), nAntenna);
       ++nEpochs;
-      }
-
-      std::vector<T> img(imgRef.size());
-      imager.get(img.data(), nPixel);
-
-      for (std::size_t i = 0; i < img.size(); ++i) {
-        // Single precision is very inaccurate due to different summation orders
-        // Use twice the absolute error for single precision
-        ASSERT_NEAR(img[i], imgRef[i], 0.05 * (4.0 / sizeof(T)));
-      }
     }
 
-    bipp::Context ctx_;
+    std::vector<T> img(imgRef.size());
+    imager.get(img.data(), nPixel);
+    
+    for (std::size_t i = 0; i < img.size(); ++i) {
+      //printf("img[%d] = %12.6f, imgRef[%d] = %12.6f, diff = %12.6f\n", i, i, img[i], imgRef[i], img[i]-imgRef[i]);
+      // Single precision is very inaccurate due to different summation orders
+      // Use twice the absolute error for single precision
+      ASSERT_NEAR(img[i], imgRef[i], 0.05 * (4.0 / sizeof(T)));
+    }
+  }
+    
+  bipp::Context ctx_;
 };
 
 using StandardSynthesisLofarSingle = StandardSynthesisLofar<float>;

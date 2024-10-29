@@ -35,7 +35,7 @@ public:
 
 private:
   auto process_single(T wl, const std::size_t nVis, ConstView<std::complex<T>, 2> vView, ConstHostView<T, 2> dMasked,
-                      ConstView<T, 2> xyzUvwView) -> void;
+                      ConstView<T, 2> xyzUvwView, ConstView<std::complex<T>, 2> wView) -> void;
 
   std::shared_ptr<ContextInternal> ctx_;
   StandardSynthesisOptions opt_;

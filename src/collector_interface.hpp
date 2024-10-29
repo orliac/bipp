@@ -18,18 +18,20 @@ public:
   static_assert(std::is_same_v<T, float> || std::is_same_v<T, double>);
 
   struct Data {
-    Data(T wl, const std::size_t nVis, ConstView<std::complex<T>, 2> v, ConstHostView<T, 2> dMasked, ConstView<T, 2> xyzUvw)
-         : wl(wl), nVis(nVis), v(v), dMasked(dMasked), xyzUvw(xyzUvw) {}
+    Data(T wl, const std::size_t nVis, ConstView<std::complex<T>, 2> v, ConstHostView<T, 2> dMasked,
+         ConstView<T, 2> xyzUvw, ConstView<std::complex<T>, 2> w)
+        : wl(wl), nVis(nVis), v(v), dMasked(dMasked), xyzUvw(xyzUvw), w(w) {}
 
     T wl;
     std::size_t nVis;
     ConstView<std::complex<T>, 2> v;
+    ConstView<std::complex<T>, 2> w;
     ConstHostView<T, 2> dMasked;
     ConstView<T, 2> xyzUvw;
   };
 
   virtual auto collect(T wl, const std::size_t nVis, ConstView<std::complex<T>, 2> v, ConstHostView<T, 2> dMasked,
-                       ConstView<T, 2> xyzUvw) -> void = 0;
+                       ConstView<T, 2> xyzUvw, ConstView<std::complex<T>, 2> w) -> void = 0;
 
   virtual auto serialize() const -> HostArray<char, 1> = 0;
 

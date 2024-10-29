@@ -107,12 +107,13 @@ auto gemmexp(std::size_t nEig, std::size_t nPixel, std::size_t nAntenna, T alpha
       for (std::size_t idxAnt = 0; idxAnt < nAntenna; ++idxAnt) {
         const auto imag =
             alpha * (pX * xyz[idxAnt] + pY * xyz[idxAnt + ldxyz] + pZ * xyz[idxAnt + 2 * ldxyz]);
-        const std::complex<T> ie{std::cos(imag), std::sin(imag)};
+        //const std::complex<T> ie{std::cos(imag), std::sin(imag)};
+        const std::complex<T> cim_part(0, imag);
+        const std::complex<T> ie = std::exp(cim_part);
         for (std::size_t idxEig = 0; idxEig < nEig; ++idxEig) {
           pixSumVec[idxEig] += vUnbeam[idxEig * ldv + idxAnt] * ie;
         }
       }
-
       for (std::size_t idxEig = 0; idxEig < nEig; ++idxEig) {
         const auto pv = pixSumVec[idxEig];
         pixSumVec[idxEig] = 0;
@@ -123,6 +124,161 @@ auto gemmexp(std::size_t nEig, std::size_t nPixel, std::size_t nAntenna, T alpha
 
 #endif
 }
+
+template <typename T>
+auto gemmexp_eo(const std::size_t nPixel, const std::size_t nAntenna, const T alpha) -> void {
+    printf("hi from gemmexp_eo\n");
+}
+
+const std::size_t M_BLOCK_SIZE = 10000;
+const std::size_t N_BLOCK_SIZE = 10000;
+
+/*
+*  Special gemm with vectorized exponentiation
+*/
+template <typename T>
+auto gemmexp_(const std::size_t M,
+              const std::size_t N,
+              const std::size_t K,
+              const T           alpha,
+              const T* __restrict__ A,
+              const std::size_t lda,
+              const T* __restrict__ B,
+              const std::size_t ldb,
+              std::complex<T>* __restrict__ C,
+              const std::size_t ldc) -> void {
+  
+  assert(K == 3);
+  
+  for (std::size_t i=0; i<M; i++) {
+    
+    T a0 = A[i];
+    T a1 = A[i + lda];
+    T a2 = A[i + 2 * lda];
+    
+    for (std::size_t j=0; j<N; j++) {
+      
+      T b0 = B[j];
+      T b1 = B[j + ldb];
+      T b2 = B[j + 2*ldb];
+      
+      T im_part = alpha * (a0*b0 + a1*b1 + a2*b2);
+      std::complex<T> cim_part(0, im_part);
+      std::complex<T> c = std::exp(cim_part);
+      
+      C[j * M + i] = c;
+    }
+  }
+}
+  
+/*
+*  Special gemm with vectorized exponentiation
+*/
+template <typename T>
+auto gemmexp_original(const std::size_t M,
+                      const std::size_t N,
+                      const std::size_t K,
+                      const T           alpha,
+                      const T* __restrict__ A,
+                      const std::size_t lda,
+                      const T* __restrict__ B,
+                      const std::size_t ldb,
+                      std::complex<T>* __restrict__ C,
+                      const std::size_t ldc) -> void {
+  
+  assert(K == 3);
+  
+  T sin_, cos_;
+  
+  const T zero = 0.0;
+  
+  std::size_t idx_c = 0;
+  std::size_t idx_b = 0;
+  
+  for (std::size_t ib = 0; ib < M; ib += M_BLOCK_SIZE ) {
+    
+    std::size_t Mb = std::min(M_BLOCK_SIZE, M - ib);
+    
+    for (std::size_t jb = 0; jb < N; jb += N_BLOCK_SIZE) {
+
+      std::size_t Nb = std::min(N_BLOCK_SIZE, N - jb);
+
+      for (std::size_t j = 0; j < Nb; j++) {
+
+        //idx_b = jb*3 + j*K;
+        idx_b = jb + j;
+        idx_c = (j + jb) * ldc + ib;
+        
+#pragma vector always
+        for (std::size_t i = 0; i < Mb; i = i + 1) {
+          T a0 = A[ib + i];
+          T a1 = A[ib + i + lda];
+          T a2 = A[ib + i + 2 * lda];
+          //T b0 = B[idx_b];
+          //T b1 = B[idx_b + 1];
+          //T b2 = B[idx_b + 2];
+          T b0 = B[idx_b];
+          T b1 = B[idx_b + ldb];
+          T b2 = B[idx_b + 2 * ldb];
+          //printf("idx_b: %ld %ld %ld\n", idx_b, idx_b + ldb, idx_b + 2 * ldb);
+          //printf("%.6f %.6f %.6f\n", a0, a1, a2);
+          //printf("%.6f %.6f %.6f\n", b0, b1, b2);
+          //printf("check = %.6f\n", (a0*b0 + a1*b1 + a2*b2));
+          T im_part = alpha * (a0*b0 + a1*b1 + a2*b2);
+          //printf("im_part = %.6f\n", im_part);
+          
+          std::complex<T> cim_part(zero, im_part);
+          C[idx_c + i] = std::exp(cim_part);
+        }
+      }
+    }
+  }
+}
+
+template auto gemmexp_<float>(const std::size_t M,
+                              const std::size_t N,
+                              const std::size_t K,
+                              const float           alpha,
+                              const float* __restrict__ A,
+                              const std::size_t lda,
+                              const float* __restrict__ B,
+                              const std::size_t ldb,
+                              std::complex<float>* __restrict__ C,
+                              const std::size_t ldc) -> void;
+    
+template auto gemmexp_<double>(const std::size_t M,
+                               const std::size_t N,
+                               const std::size_t K,
+                               const double           alpha,
+                               const double* __restrict__ A,
+                               const std::size_t lda,
+                               const double* __restrict__ B,
+                               const std::size_t ldb,
+                               std::complex<double>* __restrict__ C,
+                               const std::size_t ldc) -> void;
+  
+template auto gemmexp_original<float>(const std::size_t M,
+                                      const std::size_t N,
+                                      const std::size_t K,
+                                      const float           alpha,
+                                      const float* __restrict__ A,
+                                      const std::size_t lda,
+                                      const float* __restrict__ B,
+                                      const std::size_t ldb,
+                                      std::complex<float>* __restrict__ C,
+                                      const std::size_t ldc) -> void;
+  
+template auto gemmexp_original<double>(const std::size_t M,
+                                       const std::size_t N,
+                                       const std::size_t K,
+                                       const double           alpha,
+                                       const double* __restrict__ A,
+                                       const std::size_t lda,
+                                       const double* __restrict__ B,
+                                       const std::size_t ldb,
+                                       std::complex<double>* __restrict__ C,
+                                       const std::size_t ldc) -> void;
+
 
 template auto gemmexp<float>(std::size_t nEig, std::size_t nPixel, std::size_t nAntenna,
                              float alpha, const std::complex<float>* __restrict__ vUnbeam,
@@ -137,5 +293,12 @@ template auto gemmexp<double>(std::size_t nEig, std::size_t nPixel, std::size_t 
                               const double* __restrict__ pixelX, const double* __restrict__ pixelY,
                               const double* __restrict__ pixelZ, double* __restrict__ out,
                               std::size_t ldout) -> void;
+
+// eo former implementation
+template auto gemmexp_eo<float>(const std::size_t nPixel, const std::size_t nAntenna, const float alpha) -> void;
+
+template auto gemmexp_eo<double>(const std::size_t nPixel, const std::size_t nAntenna, const double alpha) -> void;
+
+
 }  // namespace host
 }  // namespace bipp

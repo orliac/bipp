@@ -21,9 +21,10 @@ Nufft3d3<double>::Nufft3d3(int iflag, double tol, std::size_t numTrans, std::siz
   cufinufft_default_opts(3, 3, &opts);
   opts.gpu_method = 1;
   cufinufft_plan p;
-  if (cufinufft_makeplan(3, 3, nullptr, iflag, numTrans, tol, numTrans, &p, &opts))
+  
+  if (cufinufft_makeplan(3, 3, nullptr, iflag, numTrans, tol, numTrans, &p, &opts)) {
     throw FiNUFFTError();
-
+  }
   plan_ = planType(new cufinufft_plan(p), [](void* ptr) {
     auto castPtr = reinterpret_cast<cufinufft_plan*>(ptr);
     cufinufft_destroy(*castPtr);
@@ -31,14 +32,15 @@ Nufft3d3<double>::Nufft3d3(int iflag, double tol, std::size_t numTrans, std::siz
   });
 
   if (cufinufft_setpts(M, const_cast<double*>(x), const_cast<double*>(y), const_cast<double*>(z), N,
-                       const_cast<double*>(s), const_cast<double*>(t), const_cast<double*>(u), p))
+                       const_cast<double*>(s), const_cast<double*>(t), const_cast<double*>(u), p)) {
     throw FiNUFFTError();
+  }
 }
 
 template <>
 void Nufft3d3<double>::execute(const api::ComplexType<double>* cj, api::ComplexType<double>* fk) {
-  cufinufft_execute(const_cast<api::ComplexType<double>*>(cj), fk,
-                    *reinterpret_cast<const cufinufft_plan*>(plan_.get()));
+  int ier = cufinufft_execute(const_cast<api::ComplexType<double>*>(cj), fk,
+                              *reinterpret_cast<const cufinufft_plan*>(plan_.get()));
 }
 
 template <>

@@ -227,6 +227,7 @@ auto NufftSynthesis<T>::process(CollectorInterface<T>& collector) -> void {
 
         for (std::size_t j = 0; j < nImages_; ++j) {
           auto imgPtr = img_.slice_view(j).data() + imgBegin;
+          ctx_->logger().log_matrix(BIPP_LOG_LEVEL_DEBUG, "NUFFT input virtualVis", inputSize, 1, virtualVis.slice_view(j).data() + inputBegin, inputSize);
           transform.execute(virtualVis.slice_view(j).data() + inputBegin, output.data());
           ctx_->logger().log_matrix(BIPP_LOG_LEVEL_DEBUG, "NUFFT output", imgSize, 1, output.data(),
                                     imgSize);

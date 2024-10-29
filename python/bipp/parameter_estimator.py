@@ -27,7 +27,7 @@ import bipp.gram as gr
 import bipp.filter
 import bipp.pybipp
 
-def centroid_to_intervals(centroid=None, min_pos_d=0.0, fne=True):
+def centroid_to_intervals(centroid=None, min_pos_d=0.0, fne=True, min_d=np.finfo("f").min):
     r"""
     Convert centroid to invervals as required by VirtualVisibilitiesDataProcessingBlock.
 
@@ -53,7 +53,7 @@ def centroid_to_intervals(centroid=None, min_pos_d=0.0, fne=True):
             return np.array([[min_pos_d, np.finfo("f").max]])
         else:
             return np.array([[0, np.finfo("f").max],
-                             [np.finfo("f").min, -np.finfo("f").tiny]])
+                             [min_d, -np.finfo("f").tiny]])
     
     intervals = np.empty((centroid.size, 2))
     sorted_idx = np.argsort(centroid)
@@ -71,7 +71,7 @@ def centroid_to_intervals(centroid=None, min_pos_d=0.0, fne=True):
             intervals[i, 1] = (sorted_centroid[idx] + sorted_centroid[idx + 1]) / 2
 
     if not fne:
-        intervals = np.append(intervals, [[np.finfo("f").min, -np.finfo("f").tiny]], axis=0)
+        intervals = np.append(intervals, [[min_d, -np.finfo("f").tiny]], axis=0)
 
     return intervals
 
@@ -104,6 +104,7 @@ class ParameterEstimator:
         self._intervals = []
         self._d_all = []
         self._d_all_clipped = []
+        self._d_all_neg = []
         self._ctx = ctx
         self._inferred = False
         self._fne = fne
@@ -118,10 +119,17 @@ class ParameterEstimator:
             G : :py:class:`~bipp.phased_array.bipp.gram.GramMatrix`
                 (N_beam, N_beam) gram matrix.
         """
+        print("collect S =", S)
         D =  bipp.pybipp.eigh(self._ctx, wl, S, W, XYZ)
+        N = D[D < 0.0]
         D = D[D > 0.0]
         D = D[np.argsort(D)[::-1]]
+        N = N[np.argsort(N)[::-1]]
+        #print("D =\n", D)
+        #print("N =\n", N)
         self._d_all.append(D)
+        self._d_all_neg.append(N)
+        
         if self._fne:
             idx = np.clip(np.cumsum(D) / np.sum(D), 0, 1) <= self._sigma
             Dc = D[idx]
@@ -145,8 +153,21 @@ class ParameterEstimator:
         """
         if len(self._d_all) == 0:
             return 0, np.empty((0, 2))
+
+        #print("self._d_all =", self._d_all)
         
-        D_all = np.sort(np.concatenate(self._d_all))
+        D_all     = np.sort(np.concatenate(self._d_all))
+        D_all_neg = np.sort(np.concatenate(self._d_all_neg))
+        
+        D = np.concatenate((D_all_neg, D_all))
+
+        wanted_n_d = 64
+        wanted_n_d = len(D)
+        assert(wanted_n_d > 0)
+        assert(wanted_n_d <= len(D))
+        #print(f"D size = {len(D):d}")
+        #print(D, D[-1], D[-len(D)])
+        print(f"wanted_n_d = {wanted_n_d} => d_min = {D[-wanted_n_d]}")
         
         if self._fne:
             D_all_clipped = np.sort(np.concatenate(self._d_all_clipped))
@@ -155,7 +176,7 @@ class ParameterEstimator:
             kmeans = skcl.KMeans(n_clusters=self._N_level, random_state=0).fit(np.log(D_all).reshape(-1, 1))
 
         cluster_centroid = np.sort(np.exp(kmeans.cluster_centers_)[:, 0])[::-1]
-        print("cluster_centroid =", cluster_centroid)
+        #print("cluster_centroid =", cluster_centroid)
         
         self._inferred = True
         
@@ -171,5 +192,8 @@ class ParameterEstimator:
         else:
             min_pos_d = 0
 
-        self._intervals = centroid_to_intervals(cluster_centroid, min_pos_d, self._fne)
+        #print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!  self._fne =", self._fne)
+            
+        self._intervals = centroid_to_intervals(cluster_centroid, min_pos_d, self._fne, D[-wanted_n_d])
+        
         return self._intervals

@@ -64,6 +64,11 @@ void cblas_caxpy(const int n, const void* a, const void* x, const int incx, void
 void cblas_zaxpy(const int n, const void* a, const void* x, const int incx, void* y,
                  const int incy);
 
+void cblas_somatcopy(enum CBLAS_LAYOUT order, enum CBLAS_TRANSPOSE transA, const int M, const int N,
+                     const float alpha, const float* A, const int lda, const float* B, const int ldb);
+void cblas_domatcopy(enum CBLAS_LAYOUT order, enum CBLAS_TRANSPOSE transA, const int M, const int N,
+                     const double alpha, const double* A, const int lda, const double* B, const int ldb);
+
 #else
 
 void sgemm_(const char* TRANSA, const char* TRANSB, const int* M, const int* N, const int* K,
@@ -134,6 +139,29 @@ inline auto cblas_side_to_string(CBLAS_SIDE side) -> const char* {
   return "R";
 }
 
+//inline auto omatcopy(char* ORDER, char* TRANS, blasint *rows, blasint *cols, FLOAT *alpha, FLOAT *a, blasint *lda, FLOAT *b, blasint *ldb)
+
+inline auto omatcopy(CBLAS_LAYOUT order, CBLAS_TRANSPOSE trans, int M, int N, float alpha,
+                     const float* A, int lda, float* B, int ldb) {
+#ifdef BIPP_BLAS_C
+  cblas_somatcopy(order, trans, M, N, alpha, A, lda, B, ldb);
+#else
+  printf("ouch\n");
+  fflush(stdout);
+  exit(1);
+#endif
+} 
+inline auto omatcopy(CBLAS_LAYOUT order, CBLAS_TRANSPOSE trans, int M, int N, double alpha,
+                     const double* A, int lda, double* B, int ldb) {
+#ifdef BIPP_BLAS_C
+  cblas_domatcopy(order, trans, M, N, alpha, A, lda, B, ldb);
+#else
+  printf("ouch\n");
+  fflush(stdout);
+  exit(1);
+#endif
+} 
+  
 inline auto gemm(CBLAS_LAYOUT order, CBLAS_TRANSPOSE transA, CBLAS_TRANSPOSE transB, int M, int N,
                  int K, float alpha, const float* A, int lda, const float* B, int ldb, float beta,
                  float* C, int ldc) -> void {

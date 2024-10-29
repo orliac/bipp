@@ -23,8 +23,10 @@ class Collector : public CollectorInterface<T> {
 public:
   explicit Collector(std::shared_ptr<ContextInternal> ctx);
 
+  //auto collect(T wl, std::size_t nVis, ConstView<std::complex<T>, 2> v, ConstHostView<T, 2> dMasked,
+  //             ConstView<T, 2> xyzUvw) -> void override;
   auto collect(T wl, std::size_t nVis, ConstView<std::complex<T>, 2> v, ConstHostView<T, 2> dMasked,
-               ConstView<T, 2> xyzUvw) -> void override;
+               ConstView<T, 2> xyzUvw, ConstView<std::complex<T>, 2> w) -> void override;
 
   auto serialize() const -> HostArray<char, 1> override;
 
@@ -48,6 +50,7 @@ private:
   std::vector<DeviceArray<std::complex<T>, 2>> vData_;
   std::vector<HostArray<T, 2>> dMaskedData_;
   std::vector<HostArray<T, 2>> xyzUvwData_;
+  std::vector<DeviceArray<std::complex<T>, 2>> wData_;
 };
 
 }  // namespace gpu
