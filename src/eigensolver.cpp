@@ -29,6 +29,10 @@ BIPP_EXPORT auto eigh(Context& ctx, T wl, std::size_t nAntenna, std::size_t nBea
                       std::size_t ldw, const T* xyz, std::size_t ldxyz, T* d) -> std::pair<std::size_t, std::size_t> {
   auto& ctxInternal = *InternalContextAccessor::get(ctx);
   std::pair<std::size_t, std::size_t> pev {0, 0};
+
+  auto t =
+    ctxInternal.logger().scoped_timing(BIPP_LOG_LEVEL_INFO, " eigh (src)");
+  
   if (ctxInternal.processing_unit() == BIPP_PU_GPU) {
 #if defined(BIPP_CUDA) || defined(BIPP_ROCM)
     gpu::DeviceGuard deviceGuard(ctxInternal.device_id());
@@ -54,6 +58,7 @@ BIPP_EXPORT auto eigh(Context& ctx, T wl, std::size_t nAntenna, std::size_t nBea
     throw GPUSupportError();
 #endif
   } else {
+    
     pev = host::eigh<T>(ctxInternal, wl, ConstHostView<std::complex<T>, 2>(s, {nBeam, nBeam}, {1, lds}),
                         ConstHostView<std::complex<T>, 2>(w, {nAntenna, nBeam}, {1, ldw}),
                         ConstHostView<T, 2>(xyz, {nAntenna, 3}, {1, ldxyz}), HostView<T, 1>(d, nBeam, 1));

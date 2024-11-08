@@ -25,9 +25,18 @@ template <typename T>
 auto eigh(ContextInternal& ctx, T wl, ConstDeviceView<api::ComplexType<T>, 2> s,
           ConstDeviceView<api::ComplexType<T>, 2> w, ConstDeviceView<T, 2> xyz, DeviceView<T, 1> d,
           DeviceView<api::ComplexType<T>, 2> vUnbeam) -> std::pair<std::size_t, std::size_t> {
+
+  auto t =
+    ctx.logger().scoped_timing(BIPP_LOG_LEVEL_INFO, "eigh (gpu)");
+
   const auto nAntenna = w.shape(0);
   const auto nBeam = w.shape(1);
   auto& queue = ctx.gpu_queue();
+
+  cudaEvent_t start, stop;
+  cudaEventCreate(&start);
+  cudaEventCreate(&stop);
+  //cudaEventRecord(start, queue.stream());
 
   assert(xyz.shape(0) == nAntenna);
   assert(xyz.shape(1) == 3);
@@ -45,14 +54,18 @@ auto eigh(ContextInternal& ctx, T wl, ConstDeviceView<api::ComplexType<T>, 2> s,
 
   // flag working columns / rows
   std::size_t nVis = 0;
-  for (std::size_t col = 0; col < s.shape(1); ++col) {
-    for (std::size_t row = col; row < s.shape(0); ++row) {
-      const auto val = sHost[{row, col}];
-      if (std::abs(val.x) >= std::numeric_limits<T>::epsilon() ||
-          std::abs(val.y) >= std::numeric_limits<T>::epsilon()) {
-        nonZeroIndexFlag[col] |= 1;
-        nonZeroIndexFlag[row] |= 1;
-        nVis += 1 + (row != col);
+  {
+    auto tf =
+      ctx.logger().scoped_timing(BIPP_LOG_LEVEL_INFO, "flag");
+    for (std::size_t col = 0; col < s.shape(1); ++col) {
+      for (std::size_t row = col; row < s.shape(0); ++row) {
+        const auto val = sHost[{row, col}];
+        if (std::abs(val.x) >= std::numeric_limits<T>::epsilon() ||
+            std::abs(val.y) >= std::numeric_limits<T>::epsilon()) {
+          nonZeroIndexFlag[col] |= 1;
+          nonZeroIndexFlag[row] |= 1;
+          nVis += 1 + (row != col);
+        }
       }
     }
   }
@@ -77,19 +90,35 @@ auto eigh(ContextInternal& ctx, T wl, ConstDeviceView<api::ComplexType<T>, 2> s,
   const api::ComplexType<T> one{1, 0};
   const api::ComplexType<T> zero{0, 0};
 
-  if(nBeamReduced == nBeam) {
+  if (nBeamReduced == nBeam) {
     copy(queue, s,v);
 
     // Compute gram matrix
+    queue.sync();
     auto g = queue.create_device_array<api::ComplexType<T>, 2>({nBeam, nBeam});
-    gram_matrix<T>(ctx, w, xyz, wl, g);
-
-    eigensolver::solve(queue, mode, 'L', nBeam, v.data(), v.strides(1), g.data(), g.strides(1),
-                       d.data());
-
-    if (vUnbeam.size())
-      api::blas::gemm<api::ComplexType<T>>(queue.blas_handle(), api::blas::operation::None,
-                                           api::blas::operation::None, one, w, v, zero, vUnbeam);
+    {
+      auto tg =
+        ctx.logger().scoped_timing(BIPP_LOG_LEVEL_INFO, "gram");
+      gram_matrix<T>(ctx, w, xyz, wl, g);
+    }
+    //EO: sync called at the end of eigensolver::solve
+    queue.sync();
+    {
+      auto te =
+        ctx.logger().scoped_timing(BIPP_LOG_LEVEL_INFO, "eigen solver");
+      eigensolver::solve(queue, mode, 'L', nBeam, v.data(), v.strides(1), g.data(), g.strides(1),
+                         d.data());
+    }
+    
+    if (vUnbeam.size()) {
+      queue.sync();
+      {
+        auto tb =
+          ctx.logger().scoped_timing(BIPP_LOG_LEVEL_INFO, "beam");
+        api::blas::gemm<api::ComplexType<T>>(queue.blas_handle(), api::blas::operation::None,
+                                             api::blas::operation::None, one, w, v, zero, vUnbeam);
+      }
+    }
   } else {
     // Remove broken beams from w and s
     auto wReduced = queue.create_device_array<api::ComplexType<T>, 2>({nAntenna, nBeamReduced});
@@ -106,7 +135,6 @@ auto eigh(ContextInternal& ctx, T wl, ConstDeviceView<api::ComplexType<T>, 2> s,
     // Compute gram matrix
     auto gReduced = queue.create_device_array<api::ComplexType<T>, 2>({nBeamReduced, nBeamReduced});
     gram_matrix<T>(ctx, wReduced, xyz, wl, gReduced);
-
     eigensolver::solve(queue, mode, 'L', nBeamReduced, v.data(), v.strides(1), gReduced.data(),
                        gReduced.strides(1), d.data());
 
@@ -116,9 +144,16 @@ auto eigh(ContextInternal& ctx, T wl, ConstDeviceView<api::ComplexType<T>, 2> s,
                                            vUnbeam.sub_view({0, 0}, {nAntenna, nBeamReduced}));
   }
 
+  /*cudaEventRecord(stop);
+  cudaEventSynchronize(stop);
+  float milliseconds = 0;
+  cudaEventElapsedTime(&milliseconds, start, stop);
   ctx.logger().log_matrix(BIPP_LOG_LEVEL_DEBUG, "eigenvalues", d.sub_view(0, nBeamReduced));
   ctx.logger().log_matrix(BIPP_LOG_LEVEL_DEBUG, "eigenvectors", v);
 
+  printf(" @@@@@ eigh GPU in %.3f ms\n", milliseconds);
+  fflush(stdout);*/
+  
   return std::make_pair(nBeamReduced, nVis);
 }
 
