@@ -53,6 +53,7 @@ option(BIPP_BUILD_APPS "Build apps" ON)
 option(BIPP_PYTHON "Build python module" ON)
 option(BIPP_UMPIRE "Use Umpire memory pool library" OFF)
 option(BIPP_MPI "Use MPI for multi-process parallization" OFF)
+option(BIPP_OMP "Use OpenMP for shared memory parallelization" ON)
 
 option(BIPP_INSTALL_LIB "Install library" ON)
 cmake_dependent_option(BIPP_INSTALL_APPS "BIPP_INSTALL_APPS" ON "BIPP_INSTALL_LIB" OFF)
